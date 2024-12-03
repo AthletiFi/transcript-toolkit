@@ -1,4 +1,4 @@
-# AthletiFi AWS Audio Transcription Tools
+# AWS Audio Transcription Tools
 
 A collection of tools for transcribing audio files using AWS Transcribe service. This toolset includes scripts for processing audio files, managing transcription jobs, and converting AWS transcripts into readable formats.
 
@@ -23,7 +23,7 @@ A collection of tools for transcribing audio files using AWS Transcribe service.
 1. Clone this repository:
 
    ```bash
-   git clone https://github.com/AthletiFi/aws-audio-transcribe.git
+   git clone https://github.com/qisforq/aws-audio-transcribe.git
    ```
 
 2. Navigate to the project directory:
@@ -41,6 +41,11 @@ A collection of tools for transcribing audio files using AWS Transcribe service.
 ## Usage
 
 ### Transcribing Audio Files
+
+Make the main script is executable (if not already):
+   ```bash
+   chmod +x transcribe_audio_files.sh
+   ```
 
 Run the main transcription script:
 
