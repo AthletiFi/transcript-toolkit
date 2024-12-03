@@ -113,7 +113,7 @@ print_menu() {
     ┌──────────────────────────────────────────┐
     │           Available Options:             │
     └──────────────────────────────────────────┘
-    1. Create new transcription job from S3 audio file
+    1. Create new transcription job from S3 audio file or directory
     2. Convert local JSON transcript file
     3. Convert transcript using job name
     4. Exit
@@ -122,91 +122,106 @@ print_menu() {
 EOF
 }
 
+process_single_file() {
+    local S3_PATH="$1"
+    local BUCKET="$2"
+    local KEY="$3"
+
+    # Create job name by replacing spaces and special chars with hyphens
+    local job_name
+    job_name=$(echo "$KEY" | tr -cs '[:alnum:]' '-' | sed 's/-*$//;s/^-*//' | sed 's/\.[^.]*$//')
+    
+    echo "----------------------------------------"
+    echo "File: $KEY"
+    echo "Job name will be: $job_name"
+    
+    # Prompt for number of speakers
+    while true; do
+        read -p "Enter number of speakers (2-30), '0' or 'skip' to skip this file: " speaker_count </dev/tty
+        if [ "$speaker_count" = "skip" ] || [ "$speaker_count" = "0" ]; then
+            echo "Skipping $KEY"
+            return 0
+        elif [[ "$speaker_count" =~ ^[0-9]+$ ]] && [ "$speaker_count" -ge 2 ] && [ "$speaker_count" -le 30 ]; then
+            break
+        else
+            echo "Please enter a valid number between 2 and 30, '0' or 'skip'"
+        fi
+    done
+    
+    echo "Starting transcription job with $speaker_count speakers..."
+    
+    aws transcribe start-transcription-job \
+        --transcription-job-name "$job_name" \
+        --language-code "en-US" \
+        --media-format "${KEY##*.}" \
+        --media "MediaFileUri=s3://${BUCKET}/${KEY}" \
+        --settings "{
+            \"ShowSpeakerLabels\": true,
+            \"MaxSpeakerLabels\": $speaker_count,
+            \"ChannelIdentification\": true
+        }"
+    
+    if [ $? -eq 0 ]; then
+        echo "Successfully started transcription job for $KEY"
+        echo "You can process this job later using option 3 from the main menu."
+    else
+        echo "Failed to start transcription job for $KEY"
+        echo "Please check your AWS credentials and permissions"
+    fi
+}
+
 create_transcription_job() {
     echo "Starting new transcription job..."
     
     # Prompt for S3 path
-    read -p "Enter S3 path (e.g., s3://bucket-name/path/): " S3_PATH
+    read -p "Enter S3 path (e.g., s3://bucket-name/path/ or s3://bucket-name/path/file.mp3): " S3_PATH
     
     # Remove trailing slash if present
     S3_PATH=${S3_PATH%/}
 
-    # Validate S3 path format
-    if [[ ! $S3_PATH =~ ^s3://[^/]+(/[^/]+)*$ ]]; then
+    # Validate basic s3:// prefix
+    if [[ ! $S3_PATH =~ ^s3:// ]]; then
         echo "Error: Invalid S3 path format. Must start with 's3://'"
         return 1
     fi
 
-    # Extract bucket and prefix using parameter expansion
-    BUCKET=${S3_PATH#s3://}
-    BUCKET=${BUCKET%%/*}
-    PREFIX=${S3_PATH#s3://$BUCKET/}
-    if [ "$PREFIX" = "$S3_PATH" ]; then
-        PREFIX=""
-    fi
+    # Extract bucket and key/prefix
+    BUCKET=$(echo "$S3_PATH" | sed -n 's/^s3:\/\/\([^\/]*\).*/\1/p')
+    KEY=$(echo "$S3_PATH" | sed 's/^s3:\/\/[^\/]*\///')
 
-    echo "Searching for audio files in: $S3_PATH"
-
-    # Get list of files first
-    files=$(aws s3 ls "$S3_PATH/" | awk '/\.(m4a|mp3|mp4|wav|flac|ogg|webm)$/ {$1=""; $2=""; $3=""; print substr($0,4)}')
-
-    if [ -z "$files" ]; then
-        echo "No audio files found in the specified S3 path."
+    # Check if the path exists
+    if ! aws s3 ls "s3://${BUCKET}/${KEY}" &>/dev/null; then
+        echo "Error: Path not found in S3"
         return 1
     fi
 
-    # Process each file
-    echo "$files" | while IFS= read -r filename; do
-        # Trim leading/trailing whitespace
-        filename=$(echo "$filename" | xargs)
+    # Check if it's a single file by looking for an audio extension
+    if [[ $KEY =~ \.(m4a|mp3|mp4|wav|flac|ogg|webm)$ ]]; then
+        process_single_file "$S3_PATH" "$BUCKET" "$KEY"
+    else
+        # It's a directory - list all audio files
+        echo "Searching for audio files in: $S3_PATH"
         
-        # Skip if empty
-        [ -z "$filename" ] && continue
+        # Use AWS CLI to list files and filter for audio extensions
+        files=$(aws s3 ls "s3://${BUCKET}/${KEY}/" | awk '/\.(m4a|mp3|mp4|wav|flac|ogg|webm)$/ {print $4}')
         
-        # Create job name by replacing spaces and special chars with hyphens
-        job_name=$(echo "$filename" | tr -cs '[:alnum:]' '-' | sed 's/-*$//;s/^-*//' | sed 's/\.[^.]*$//')
-        
-        echo "----------------------------------------"
-        echo "File: $filename"
-        echo "Job name will be: $job_name"
-        
-        # Prompt for number of speakers
-        while true; do
-            read -p "Enter number of speakers (2-30), '0' or 'skip' to skip this file: " speaker_count </dev/tty
-            if [ "$speaker_count" = "skip" ] || [ "$speaker_count" = "0" ]; then
-                echo "Skipping $filename"
-                continue 2
-            elif [[ "$speaker_count" =~ ^[0-9]+$ ]] && [ "$speaker_count" -ge 2 ] && [ "$speaker_count" -le 30 ]; then
-                break
-            else
-                echo "Please enter a valid number between 2 and 30, '0' or 'skip'"
-            fi
-        done
-        
-        echo "Starting transcription job with $speaker_count speakers..."
-        
-        aws transcribe start-transcription-job \
-            --transcription-job-name "$job_name" \
-            --language-code "en-US" \
-            --media-format "${filename##*.}" \
-            --media "MediaFileUri=s3://${BUCKET}/${PREFIX:+$PREFIX/}${filename}" \
-            --settings "{
-                \"ShowSpeakerLabels\": true,
-                \"MaxSpeakerLabels\": $speaker_count,
-                \"ChannelIdentification\": true
-            }"
-        
-        if [ $? -eq 0 ]; then
-            echo "Successfully started transcription job for $filename"
-            echo "You can process this job later using option 3 from the main menu."
-        else
-            echo "Failed to start transcription job for $filename"
-            echo "Please check your AWS credentials and permissions"
+        if [ -z "$files" ]; then
+            echo "No audio files found in the specified S3 path."
+            return 1
         fi
-        
-        # Add a small delay to avoid hitting API rate limits
-        sleep 2
-    done
+
+        # Process each file
+        echo "$files" | while IFS= read -r filename; do
+            # Skip if empty
+            [ -z "$filename" ] && continue
+            
+            # Process the file
+            process_single_file "$S3_PATH/$filename" "$BUCKET" "${KEY:+$KEY/}$filename"
+            
+            # Add a small delay to avoid hitting API rate limits
+            sleep 2
+        done
+    fi
 
     echo "All files processed. Returning to main menu..."
 }
