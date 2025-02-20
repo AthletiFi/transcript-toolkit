@@ -18,9 +18,9 @@ check_dependencies() {
     fi
 
     # Check if virtual environment exists, create if it doesn't
-    VENV_DIR="$HOME/.athletifi_transcribe_venv"
+    VENV_DIR="$HOME/.aws_transcribe_venv"
     if [ ! -d "$VENV_DIR" ]; then
-        echo "Creating virtual environment for AthletiFi Transcriber..."
+        echo "Creating virtual environment for AWS Transcriber..."
         python3 -m venv "$VENV_DIR"
         if [ $? -ne 0 ]; then
             echo "Error: Failed to create virtual environment."
@@ -84,7 +84,7 @@ trap cleanup EXIT
 print_welcome_message() {
     cat << "EOF"
     ╔════════════════════════════════════════════════════════════════════════════╗
-    ║                 Welcome to AthletiFi Audio Transcriber                     ║
+    ║                 Welcome to AWS Audio Transcriber                     ║
     ╚════════════════════════════════════════════════════════════════════════════╝
 
     This script helps you work with AWS Transcribe, supporting multiple audio 
@@ -229,7 +229,7 @@ create_transcription_job() {
 print_completion_message() {
     cat << "EOF"
 
-    Thank you for using the AthletiFi Audio Transcriber!
+    Thank you for using the AWS Audio Transcriber!
     
     ┌──────────────────────────────────────────┐
     │            Process Complete!             │
@@ -264,7 +264,7 @@ while true; do
             print_menu
             ;;
         4)
-            echo "Thank you for using AthletiFi Audio Transcriber. Goodbye!"
+            echo "Thank you for using AWS Audio Transcriber. Goodbye!"
             exit 0
             ;;
         *)

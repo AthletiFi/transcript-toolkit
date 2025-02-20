@@ -21,7 +21,7 @@ var/
 *.egg
 .env
 .venv
-.athletifi_transcribe_venv/
+.aws_transcribe_venv/
 *.txt
 *.vtt
 *.tsv
@@ -30,5 +30,4 @@ var/
 *.m4a
 *.mp3
 .DS_Store
-AthletiFI Audio Recordings
-AthletiFi Transcripts
+
