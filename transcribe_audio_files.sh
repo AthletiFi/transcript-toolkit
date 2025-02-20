@@ -116,9 +116,10 @@ print_menu() {
     1. Create new transcription job from S3 audio file or directory
     2. Convert local JSON transcript file
     3. Convert transcript using job name
-    4. Exit
+    4. Upload local audio file and transcribe
+    5. Exit
 
-    Please enter your choice (1-4): 
+    Please enter your choice (1-5): 
 EOF
 }
 
@@ -226,6 +227,43 @@ create_transcription_job() {
     echo "All files processed. Returning to main menu..."
 }
 
+upload_and_transcribe() {
+    echo "Upload and transcribe local audio file..."
+
+    # Prompt for local file path
+    read -p "Enter path to local audio file: " LOCAL_FILE_PATH
+
+    # Validate file exists
+    if [! -f "$LOCAL_FILE_PATH" ]; then
+        echo "Error: File not found."
+        return 1
+    fi
+
+    # Prompt for bucket name with default
+    read -p "Enter S3 bucket name (default: s3://internal-audio-recordings): " BUCKET
+
+    # Use default bucket if none provided
+    if [ -z "$BUCKET" ]; then
+        BUCKET="s3://internal-audio-recordings"
+    fi
+
+    # Extract filename
+    FILENAME=$(basename "$LOCAL_FILE_PATH")
+
+    # Upload file to S3
+    echo "Uploading $FILENAME to $BUCKET..."
+    aws s3 cp "$LOCAL_FILE_PATH" "$BUCKET/$FILENAME"
+
+    if [ $? -eq 0 ]; then
+        echo "Upload successful!"
+        # Start transcription job (reuse existing process_single_file function)
+        process_single_file "$BUCKET/$FILENAME" "$BUCKET" "$FILENAME"
+    else
+        echo "Error uploading file to S3."
+        return 1
+    fi
+}
+
 print_completion_message() {
     cat << "EOF"
 
@@ -264,6 +302,11 @@ while true; do
             print_menu
             ;;
         4)
+            upload_and_transcribe
+            print_completion_message
+            print_menu
+            ;;
+        5)
             echo "Thank you for using AWS Audio Transcriber. Goodbye!"
             exit 0
             ;;
