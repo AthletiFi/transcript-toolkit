@@ -28,8 +28,8 @@ check_dependencies() {
         fi
     fi
 
-    # Activate virtual environment
-    source "$VENV_DIR/bin/activate"
+    # Activate virtual environment - using '.' instead of 'source' allows it to be more portable across different shells that support POSIX.
+    . "$VENV_DIR/bin/activate"
     if [ $? -ne 0 ]; then
         echo "Error: Failed to activate virtual environment."
         exit 1
@@ -42,7 +42,7 @@ check_dependencies() {
             echo "Successfully installed boto3"
         else
             echo "Error: Failed to install boto3. Please try manually using:"
-            echo "source $VENV_DIR/bin/activate && pip3 install boto3"
+            echo ". $VENV_DIR/bin/activate && pip3 install boto3"
             deactivate
             exit 1
         fi
@@ -55,17 +55,24 @@ check_dependencies() {
             echo "Successfully installed requests"
         else
             echo "Error: Failed to install requests. Please try manually using:"
-            echo "source $VENV_DIR/bin/activate && pip3 install requests"
+            echo ". $VENV_DIR/bin/activate && pip3 install requests"
             deactivate
             exit 1
         fi
     fi
 
-    # Check if AWS CLI is installed
+    # Check if AWS CLI is installed and configured
     if ! command -v aws &> /dev/null; then
         echo "Error: AWS CLI is required but not installed."
         echo "Please install AWS CLI using: brew install awscli"
         echo "Then configure it with: aws configure"
+        deactivate
+        exit 1
+    fi
+
+    # Check AWS CLI configuration
+    if ! aws configure list | grep -q "access_key"; then
+        echo "Error: AWS CLI is not configured. Please configure it using: aws configure"
         deactivate
         exit 1
     fi
@@ -123,20 +130,23 @@ print_menu() {
 EOF
 }
 
+create_job_name() {
+    local KEY="$1"
+    echo "$KEY" | tr -cs '[:alnum:]' '-' | sed 's/-*$//;s/^-*//' | sed 's/\.[^.]*$//'
+}
+
 process_single_file() {
     local S3_PATH="$1"
     local BUCKET="$2"
     local KEY="$3"
 
-    # Create job name by replacing spaces and special chars with hyphens
     local job_name
-    job_name=$(echo "$KEY" | tr -cs '[:alnum:]' '-' | sed 's/-*$//;s/^-*//' | sed 's/\.[^.]*$//')
+    job_name=$(create_job_name "$KEY")
     
     echo "----------------------------------------"
     echo "File: $KEY"
     echo "Job name will be: $job_name"
     
-    # Prompt for number of speakers
     while true; do
         read -p "Enter number of speakers (2-30), '0' or 'skip' to skip this file: " speaker_count </dev/tty
         if [ "$speaker_count" = "skip" ] || [ "$speaker_count" = "0" ]; then
@@ -174,21 +184,23 @@ process_single_file() {
 create_transcription_job() {
     echo "Starting new transcription job..."
     
-    # Prompt for S3 path
-    read -p "Enter S3 path (e.g., s3://bucket-name/path/ or s3://bucket-name/path/file.mp3): " S3_PATH
+    read -p "Enter S3 path (e.g., s3://bucket-name/path/ or s3://bucket-name/path/file.mp3 or bucket-name/path/ or bucket-name/path/file.mp3): " S3_PATH
     
+    # Remove 's3://' prefix if present
+    S3_PATH=${S3_PATH#s3://}
+
     # Remove trailing slash if present
     S3_PATH=${S3_PATH%/}
 
-    # Validate basic s3:// prefix
-    if [[ ! $S3_PATH =~ ^s3:// ]]; then
-        echo "Error: Invalid S3 path format. Must start with 's3://'"
+    # Validate basic format (after removing prefix)
+    if [[ ! $S3_PATH =~ ^[^\/]+\/ ]]; then
+        echo "Error: Invalid S3 path format. Must include a bucket name and a path."
         return 1
     fi
 
     # Extract bucket and key/prefix
-    BUCKET=$(echo "$S3_PATH" | sed -n 's/^s3:\/\/\([^\/]*\).*/\1/p')
-    KEY=$(echo "$S3_PATH" | sed 's/^s3:\/\/[^\/]*\///')
+    BUCKET=$(echo "$S3_PATH" | sed -n 's/^\([^\/]*\).*/\1/p')
+    KEY=$(echo "$S3_PATH" | sed 's/^[^\/]*\///')
 
     # Check if the path exists
     if ! aws s3 ls "s3://${BUCKET}/${KEY}" &>/dev/null; then
@@ -211,12 +223,9 @@ create_transcription_job() {
             return 1
         fi
 
-        # Process each file
         echo "$files" | while IFS= read -r filename; do
             # Skip if empty
             [ -z "$filename" ] && continue
-            
-            # Process the file
             process_single_file "$S3_PATH/$filename" "$BUCKET" "${KEY:+$KEY/}$filename"
             
             # Add a small delay to avoid hitting API rate limits
@@ -234,7 +243,7 @@ upload_and_transcribe() {
     read -p "Enter path to local audio file: " LOCAL_FILE_PATH
 
     # Validate file exists
-    if [! -f "$LOCAL_FILE_PATH" ]; then
+    if [ ! -f "$LOCAL_FILE_PATH" ]; then
         echo "Error: File not found."
         return 1
     fi
@@ -244,20 +253,20 @@ upload_and_transcribe() {
 
     # Use default bucket if none provided
     if [ -z "$BUCKET" ]; then
-        BUCKET="s3://internal-audio-recordings"
+        BUCKET="internal-audio-recordings"
     fi
 
-    # Extract filename
+    # Remove 's3://' prefix if present
+    BUCKET=${BUCKET#s3://}
+
     FILENAME=$(basename "$LOCAL_FILE_PATH")
 
-    # Upload file to S3
-    echo "Uploading $FILENAME to $BUCKET..."
-    aws s3 cp "$LOCAL_FILE_PATH" "$BUCKET/$FILENAME"
+    echo "Uploading $FILENAME to s3://$BUCKET..."
+    aws s3 cp "$LOCAL_FILE_PATH" "s3://$BUCKET/$FILENAME"
 
     if [ $? -eq 0 ]; then
         echo "Upload successful!"
-        # Start transcription job (reuse existing process_single_file function)
-        process_single_file "$BUCKET/$FILENAME" "$BUCKET" "$FILENAME"
+        process_single_file "s3://$BUCKET/$FILENAME" "$BUCKET" "$FILENAME"
     else
         echo "Error uploading file to S3."
         return 1
@@ -282,37 +291,45 @@ check_dependencies
 print_welcome_message
 
 while true; do
-    read choice
+    read -p "Enter your choice: " choice
     
     case $choice in
         1)
             create_transcription_job
             print_menu
-            ;;
+          ;;
         2)
             echo "Converting local JSON transcript file..."
-            python3 convert-aws-transcript.py
-            print_completion_message
+            if [ ! -f "convert-aws-transcript.py" ]; then
+                echo "Error: convert-aws-transcript.py not found."
+            else
+                python3 convert-aws-transcript.py
+                print_completion_message
+            fi
             print_menu
-            ;;
+          ;;
         3)
             echo "Converting transcript using job name..."
-            python3 convert-aws-transcript-by-jobname.py
-            print_completion_message
+            if [ ! -f "convert-aws-transcript-by-jobname.py" ]; then
+                echo "Error: convert-aws-transcript-by-jobname.py not found."
+            else
+                python3 convert-aws-transcript-by-jobname.py
+                print_completion_message
+            fi
             print_menu
-            ;;
+          ;;
         4)
             upload_and_transcribe
             print_completion_message
             print_menu
-            ;;
+          ;;
         5)
             echo "Thank you for using AWS Audio Transcriber. Goodbye!"
             exit 0
-            ;;
+          ;;
         *)
-            echo "Invalid choice. Please enter 1, 2, 3, or 4."
+            echo "Invalid choice. Please enter 1, 2, 3, 4, or 5."
             print_menu
-            ;;
+          ;;
     esac
 done
