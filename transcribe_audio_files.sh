@@ -90,25 +90,17 @@ trap cleanup EXIT
 
 print_welcome_message() {
     cat << "EOF"
-    ╔════════════════════════════════════════════════════════════════════════════╗
-    ║                 Welcome to AWS Audio Transcriber                     ║
-    ╚════════════════════════════════════════════════════════════════════════════╝
+    ╔════════════════════════════════════════════════════════════════╗
+    ║                 Welcome to AWS Audio Transcriber               ║
+    ╚════════════════════════════════════════════════════════════════╝
 
-    This script helps you work with AWS Transcribe, supporting multiple audio 
-    formats and automatic speaker detection.
+    Hey there! 👋 Ready to transcribe some audio?
 
-    ┌──────────────────────────────────────────┐
-    │           Before You Begin:              │
-    └──────────────────────────────────────────┘
-    1. Ensure you have AWS CLI configured with appropriate permissions
-    2. Python 3 with boto3 package installed
-    3. Access to required input files/S3 paths
-    
-    Supported audio formats:
-    ✦ MP3 (.mp3)         ✦ WAV (.wav)
-    ✦ M4A (.m4a)         ✦ FLAC (.flac)
-    ✦ MP4 (.mp4)         ✦ OGG (.ogg)
-    ✦ WebM (.webm)
+    This tool uses the magic of AWS Transcribe to turn your audio files into text.
+
+    Before we begin, make sure you have:
+    ✦ AWS CLI set up and ready to go.
+    ✦ Python 3 and the `boto3` package installed.
 
 EOF
     print_menu
@@ -116,15 +108,16 @@ EOF
 
 print_menu() {
     cat << "EOF"
-
+    
+    What do you want to do today?
     ┌──────────────────────────────────────────┐
     │           Available Options:             │
     └──────────────────────────────────────────┘
-    1. Create new transcription job from S3 audio file or directory
-    2. Convert local JSON transcript file
-    3. Convert transcript using job name
-    4. Upload local audio file and transcribe
-    5. Exit
+    1. ☁️ Transcribe from S3: Create a new transcription job from an S3 audio file or directory.
+    2. 📄 Convert Local Transcript: Process a local JSON transcript file.
+    3. 🆔 Convert by Job Name: Process a transcript using its AWS Transcribe job name.
+    4. ⬆️ Upload and Transcribe: Upload a local audio file and transcribe it.
+    5. 🚪 Exit
 
     Please enter your choice (1-5): 
 EOF
