@@ -7,13 +7,37 @@ from ui_style import custom_style
 
 def display_welcome():
     banner = r"""
+                          *****                          
+                         ********                        
+                        *********                        
+                     ***************                     
+                   ***      *      ***                   
+                ****        *         ****               
+           ******           *           ******           
+         ********           *           ********         
+         ********        *******        *********        
+         *************  ********** *************         
+           ****     *****************     ****           
+            **         ***********        ***            
+             **         **********        **             
+              **        ********         **              
+              ***      **      ***      **               
+               ***   ***         ***   ***               
+                ******            *******                
+               ********           ********               
+               ***************************               
+                ******            *******                
+                                                                            
+
 ╔═ 🎵 ═══ 🎧 ═══ 🎙️ ═══ 🎚️ ═══ 🎛️ ═══ 🎵 ═══ 🎧 ═══ 🎙️ ═══ 🎚️ ═╗
-║             Welcome to the Transcript Toolkit!            ║
+║          Welcome to the AthletiFi Transcript Toolkit!          ║
 ╚═ 🎵 ═══ 🎧 ═══ 🎙️ ═══ 🎚️ ═══ 🎛️ ═══ 🎵 ═══ 🎧 ═══ 🎙️ ═══ 🎚️ ═╝
     """
     print(banner)
-    print("A unified tool for cleaning VTT transcripts, starting AWS Transcription jobs,")
-    print("and converting AWS Transcribe JSON transcripts.\n")
+    print("Use these tools to clean up transcripts, start new transcription jobs,")
+    print("and convert AWS transcripts into clean text.\n")
+    print("Perfect for turning meeting recordings and interviews into text")
+    print("that works well with AI tools and documentation.\n")
 
 def main_menu():
     return questionary.select(
