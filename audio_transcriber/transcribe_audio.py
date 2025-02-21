@@ -140,7 +140,7 @@ def run_transcription_menu():
         "Choose a transcription method:",
         choices=[
             "Upload a local audio file from computer",
-            "Use S3 URI for an audio files hosted on S3"
+            "Use S3 URI for an audio file hosted on S3"
         ],
         style=custom_style,
         pointer="👉 "
@@ -176,4 +176,37 @@ def run_transcription_menu():
                 return
         else:
             s3_path = questionary.text(
-                "Enter the S3 URI (e.g., s3://bucket/path/to/file.mp3
+                "Enter the S3 URI (e.g., s3://bucket/path/to/file.mp3):",
+                style=custom_style
+            ).ask().strip()
+            if not s3_path.startswith("s3://"):
+                print("❌ Invalid S3 URI. It should start with 's3://'.")
+                return
+
+        speaker_input = questionary.text(
+            "Enter number of speakers (between 2 and 30):",
+            style=custom_style
+        ).ask()
+        try:
+            speaker_count = int(speaker_input)
+            if speaker_count < 2 or speaker_count > 30:
+                print("Speaker count should be between 2 and 30. Defaulting to 2.")
+                speaker_count = 2
+        except ValueError:
+            print("Invalid input for speaker count. Defaulting to 2 speakers.")
+            speaker_count = 2
+
+        print("Starting transcription job...")
+        try:
+            response = start_transcription_job(s3_path, speaker_count)
+            job_name = response.get('TranscriptionJob', {}).get('TranscriptionJobName', 'Unknown')
+            print("✓ Transcription job started successfully!")
+            print("Job Name:", job_name)
+        except Exception as e:
+            print(f"❌ Error: {e}")
+
+    except Exception as e:
+        print(f"❌ Unexpected error: {e}")
+
+if __name__ == '__main__':
+    run_transcription_menu()
