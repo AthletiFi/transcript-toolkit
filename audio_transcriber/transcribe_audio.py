@@ -11,6 +11,7 @@ import time
 import os
 import boto3
 import questionary
+from botocore.exceptions import ClientError
 from ui_style import custom_style
 
 def print_welcome_message():
@@ -46,13 +47,6 @@ def create_job_name(s3_path):
 def start_transcription_job(s3_path, speaker_count):
     """
     Start an AWS Transcribe job with the specified S3 path and speaker count.
-    
-    Args:
-        s3_path (str): S3 URI of the audio file.
-        speaker_count (int): Number of speakers expected in the audio.
-    
-    Returns:
-        dict: Response from AWS Transcribe.
     """
     client = boto3.client('transcribe')
     job_name = create_job_name(s3_path)
@@ -71,7 +65,7 @@ def start_transcription_job(s3_path, speaker_count):
         )
         return response
     except client.exceptions.ConflictException:
-        # Append a timestamp if job name already exists.
+        # Add a timestamp if job name already exists.
         job_name = f"{job_name}-{int(time.time())}"
         response = client.start_transcription_job(
             TranscriptionJobName=job_name,
@@ -88,24 +82,47 @@ def start_transcription_job(s3_path, speaker_count):
     except Exception as e:
         raise Exception(f"Failed to start transcription job: {e}")
 
+def validate_bucket_exists(bucket_name):
+    """
+    Check if an S3 bucket exists and is accessible.
+    """
+    s3 = boto3.client('s3')
+    try:
+        s3.head_bucket(Bucket=bucket_name)
+        return True
+    except ClientError as e:
+        error_code = e.response['Error']['Code']
+        if error_code == '404':
+            raise Exception(f"Bucket '{bucket_name}' does not exist")
+        elif error_code == '403':
+            raise Exception(f"No permission to access bucket '{bucket_name}'")
+        raise Exception(f"Error accessing bucket: {e}")
+    except Exception as e:
+        raise Exception(f"Bucket validation failed: {e}")
+
 def upload_audio_file(local_file_path, bucket, object_name=None):
     """
     Upload a local audio file to the specified S3 bucket.
-    
-    Returns:
-        str: The S3 URI of the uploaded file.
     """
     s3 = boto3.client('s3')
     if object_name is None:
         object_name = os.path.basename(local_file_path)
     try:
-        print(f"Uploading {local_file_path} to bucket {bucket} as {object_name}...")
+        if not os.path.isfile(local_file_path):
+            raise FileNotFoundError(f"Local file '{local_file_path}' not found")
+            
+        print(f"Uploading {local_file_path} to bucket {bucket}...")
         s3.upload_file(local_file_path, bucket, object_name)
         s3_uri = f"s3://{bucket}/{object_name}"
-        print("Upload successful!")
+        print("✓ Upload successful!")
         return s3_uri
+    except ClientError as e:
+        error_code = e.response['Error']['Code']
+        if error_code == 'AccessDenied':
+            raise Exception(f"Permission denied writing to bucket '{bucket}'")
+        raise Exception(f"AWS upload error: {e}")
     except Exception as e:
-        raise Exception(f"Failed to upload file: {e}")
+        raise Exception(f"Upload failed: {e}")
 
 def run_transcription_menu():
     """
@@ -116,7 +133,7 @@ def run_transcription_menu():
     try:
         check_aws_configuration()
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"❌ Error: {e}")
         return
 
     option = questionary.select(
@@ -129,50 +146,34 @@ def run_transcription_menu():
         pointer="👉 "
     ).ask()
 
-    if option == "Upload a local audio file from computer":
-        local_file = questionary.text(
-            "Enter the local file path (e.g., /path/to/file.mp3):",
-            style=custom_style
-        ).ask()
-        bucket = questionary.text(
-            "Enter the target S3 bucket name:",
-            style=custom_style
-        ).ask()
-        try:
-            s3_path = upload_audio_file(local_file, bucket)
-        except Exception as e:
-            print("Error:", e)
-            return
-    else:
-        s3_path = questionary.text(
-            "Enter the S3 URI (e.g., s3://bucket/path/to/file.mp3):",
-            style=custom_style
-        ).ask()
-        if not s3_path.startswith("s3://"):
-            print("Invalid S3 URI. It should start with 's3://'.")
-            return
-
-    speaker_input = questionary.text(
-        "Enter number of speakers (between 2 and 30):",
-        style=custom_style
-    ).ask()
+    s3_path = None
     try:
-        speaker_count = int(speaker_input)
-        if speaker_count < 2 or speaker_count > 30:
-            print("Speaker count should be between 2 and 30. Defaulting to 2.")
-            speaker_count = 2
-    except ValueError:
-        print("Invalid input for speaker count. Defaulting to 2 speakers.")
-        speaker_count = 2
+        if option == "Upload a local audio file from computer":
+            local_file = questionary.text(
+                "Enter the local file path (e.g., /path/to/file.mp3):",
+                style=custom_style
+            ).ask().strip()
+            
+            if not os.path.isfile(local_file):
+                print(f"❌ Error: File '{local_file}' not found")
+                return
 
-    print("Starting transcription job...")
-    try:
-        response = start_transcription_job(s3_path, speaker_count)
-        job_name = response.get('TranscriptionJob', {}).get('TranscriptionJobName', 'Unknown')
-        print("Transcription job started successfully!")
-        print("Job Name:", job_name)
-    except Exception as e:
-        print("Error:", e)
+            bucket = questionary.text(
+                "Enter the target S3 bucket name (leave blank for default 'internal-audio-recordings'):",
+                style=custom_style
+            ).ask().strip() or "internal-audio-recordings"
 
-if __name__ == '__main__':
-    run_transcription_menu()
+            try:
+                validate_bucket_exists(bucket)
+            except Exception as e:
+                print(f"❌ {e}")
+                return
+
+            try:
+                s3_path = upload_audio_file(local_file, bucket)
+            except Exception as e:
+                print(f"❌ {e}")
+                return
+        else:
+            s3_path = questionary.text(
+                "Enter the S3 URI (e.g., s3://bucket/path/to/file.mp3
