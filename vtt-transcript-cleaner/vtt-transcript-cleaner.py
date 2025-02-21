@@ -1,10 +1,7 @@
 import re
 import sys
 import os
-from datetime import datetime
 import time
-import subprocess
-import shlex
 
 def print_welcome_message():
     """Display stylized welcome message and script description."""
@@ -44,10 +41,6 @@ def print_concluding_message(output_file):
     │               Process Complete!          │
     └──────────────────────────────────────────┘
     Your transcript has been successfully cleaned and saved!
-
-    ┌──────────────────────────────────────────┐
-    │            Output Information:           │
-    └──────────────────────────────────────────┘
     ✦ Cleaned transcript saved to: {output_file}
     ✦ The file is now ready for AI analysis
     ✦ Original VTT file has not been modified
@@ -104,7 +97,8 @@ def sanitize_path(input_path):
         raise FileNotFoundError(f"Error processing path: {str(e)}")
 
 def combine_speaker_lines(content):
-    """Combine consecutive lines from the same speaker using two simple patterns:
+    """
+    Combine consecutive lines from the same speaker using two simple patterns:
     1. Lines without speaker names following a speaker line are continuations
     2. Consecutive lines with the same speaker name should be combined
     """
@@ -122,11 +116,11 @@ def combine_speaker_lines(content):
             continue
             
         # Check if line starts with a speaker (contains ':' with text before it)
-        if ':' in line and line.split(':', 1)[0].strip():  # Speaker line
+        if ':' in line and line.split(':', 1)[0].strip():
             if current_line:
                 combined_lines.append(current_line)
             current_line = line
-        elif current_line:  # Continuation line
+        elif current_line:
             current_line += ' ' + line
         else:
             combined_lines.append(line)
@@ -166,7 +160,15 @@ def combine_speaker_lines(content):
     return '\n'.join(final_lines)
 
 def clean_transcript(input_file):
-    """Clean the VTT transcript file and convert it to plain text."""
+    """
+    Clean the VTT transcript file and convert it to plain text.
+    
+    Args:
+        input_file (str): Path to the original VTT file.
+    
+    Returns:
+        str: Path to the cleaned transcript file.
+    """
     show_progress("Reading transcript file...")
     
     # Read the input file
@@ -203,52 +205,48 @@ def clean_transcript(input_file):
     
     show_progress("Cleaning up extra spaces...")
     
-    # Remove extra blank lines
     content = re.sub(r'\n\s*\n', '\n', content)
     
-    # Create output filename
     output_file = input_file.replace('.vtt', '_cleaned.txt')
     if output_file == input_file:
         output_file = input_file + '_cleaned.txt'
     
     show_progress("Saving cleaned transcript...")
     
-    # Write the cleaned content
     with open(output_file, 'w', encoding='utf-8') as f:
         f.write(content)
     
     return output_file
 
-def main():
+def clean_vtt_file(file_path):
+    """
+    Cleans a VTT transcript file and returns the path of the cleaned output file.
+    
+    Args:
+        file_path (str): Path to the original VTT file.
+    
+    Returns:
+        str: Path to the cleaned transcript file.
+    """
+    # Sanitize and validate the file path
+    input_file = sanitize_path(file_path)
+    
+    # Clean the transcript and return the output file path
+    output_file = clean_transcript(input_file)
+    return output_file
+
+def run_cleaner():
+    """
+    Runs the VTT cleaner in interactive mode, prompting the user for input.
+    """
+    print_welcome_message()
+    file_path = input("\nPlease enter the path to your VTT file: ")
     try:
-        print_welcome_message()
-        
-        # Get and validate file path
-        while True:
-            try:
-                file_path = input("\nPlease enter the path to your VTT file: ")
-                input_file = sanitize_path(file_path)
-                break
-            except FileNotFoundError as e:
-                print(f"\nError: {str(e)}")
-                print("Please try again or press Ctrl+C to exit.\n")
-        
-        print("\nBeginning transcript cleanup process...")
-        
-        # Process the file
-        output_file = clean_transcript(input_file)
-        
+        output_file = clean_vtt_file(file_path)
         print("\n✨ Success! ✨")
-        
-        # Print completion message
         print_concluding_message(output_file)
-        
-    except KeyboardInterrupt:
-        print("\n\nProcess cancelled by user.")
-        sys.exit(0)
     except Exception as e:
-        print(f"\nError processing file: {str(e)}")
-        sys.exit(1)
+        print(f"\nError: {e}")
 
 if __name__ == "__main__":
-    main()
+    run_cleaner()
