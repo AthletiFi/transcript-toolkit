@@ -20,7 +20,7 @@ def main_menu():
         "👇 Please choose an option:",
         choices=[
             "🧹 Clean a VTT Transcript",
-            "☁️ Start an AWS Transcription Job",
+            "☁️ Transcribe Audio (with AWS Transcribe)",
             "🔄 Convert an AWS Transcribe JSON Transcript",
             "🚪 Exit"
         ],
@@ -34,7 +34,7 @@ def main():
         choice = main_menu()
         if choice == "🧹 Clean a VTT Transcript":
             run_cleaner()
-        elif choice == "☁️ Start an AWS Transcription Job":
+        elif choice == "☁️ Transcribe Audio (with AWS Transcribe)":
             run_transcription_menu()
         elif choice == "🔄 Convert an AWS Transcribe JSON Transcript":
             run_converter_json()

@@ -3,12 +3,7 @@
 transcribe_audio.py
 
 This module provides an interactive interface to start an AWS Transcribe job.
-It lets the user choose between:
-  • Uploading a local audio file to S3 and transcribing it, or
-  • Using an existing S3 URI to start transcription.
-
-Arrow keys can be used to select an option.
-Ensure that AWS credentials are configured and that boto3 and questionary are installed.
+It lets you choose between uploading a local audio file to S3 and transcribing it, or using an existing S3 URI for transcription.
 """
 
 import re
@@ -16,6 +11,16 @@ import time
 import os
 import boto3
 import questionary
+from ui_style import custom_style
+
+def print_welcome_message():
+    welcome_text = """
+╔═ 🎤 ═══ ☁️ ═══ 🔊 ═══ 📡 ═══ 🎤 ═══ ☁️ ═══ 🔊 ═══ 📡 ═══ 🎤 ═╗
+║          Transcribe Audio (with AWS Transcribe)          ║
+╚═ 🎤 ═══ ☁️ ═══ 🔊 ═══ 📡 ═══ 🎤 ═══ ☁️ ═══ 🔊 ═══ 📡 ═══ 🎤 ═╝
+
+"""
+    print(welcome_text)
 
 def check_aws_configuration():
     """
@@ -104,13 +109,9 @@ def upload_audio_file(local_file_path, bucket, object_name=None):
 
 def run_transcription_menu():
     """
-    Run an interactive prompt to start an AWS Transcribe job.
-    Provides a selectable menu (using arrow keys) for the user to choose
-    between uploading a local file or using an existing S3 URI.
+    Runs the AWS Audio Transcriber module in interactive mode.
     """
-    print("╔══════════════════════════════════════════════════════════╗")
-    print("║           Welcome to the AWS Audio Transcriber           ║")
-    print("╚══════════════════════════════════════════════════════════╝")
+    print_welcome_message()
     
     try:
         check_aws_configuration()
@@ -118,30 +119,43 @@ def run_transcription_menu():
         print(f"Error: {e}")
         return
 
-    # Use questionary to let the user choose an option with arrow keys.
     option = questionary.select(
-        "Choose an option:",
+        "Choose a transcription method:",
         choices=[
-            "Upload a local audio file to S3 and transcribe",
-            "Use an existing S3 URI for transcription"
-        ]
+            "Upload a local audio file from computer",
+            "Use S3 URI for an audio files hosted on S3"
+        ],
+        style=custom_style,
+        pointer="👉 "
     ).ask()
 
-    if option == "Upload a local audio file to S3 and transcribe":
-        local_file = questionary.text("Enter the local file path (e.g., /path/to/file.mp3):").ask()
-        bucket = questionary.text("Enter the target S3 bucket name:").ask()
+    if option == "Upload a local audio file from computer":
+        local_file = questionary.text(
+            "Enter the local file path (e.g., /path/to/file.mp3):",
+            style=custom_style
+        ).ask()
+        bucket = questionary.text(
+            "Enter the target S3 bucket name:",
+            style=custom_style
+        ).ask()
         try:
             s3_path = upload_audio_file(local_file, bucket)
         except Exception as e:
             print("Error:", e)
             return
     else:
-        s3_path = questionary.text("Enter the S3 URI (e.g., s3://bucket/path/to/file.mp3):").ask()
+        s3_path = questionary.text(
+            "Enter the S3 URI (e.g., s3://bucket/path/to/file.mp3):",
+            style=custom_style
+        ).ask()
         if not s3_path.startswith("s3://"):
             print("Invalid S3 URI. It should start with 's3://'.")
             return
 
-    speaker_input = questionary.text("Enter number of speakers (between 2 and 30):").ask()
+    speaker_input = questionary.text(
+        "Enter number of speakers (between 2 and 30):",
+        style=custom_style
+    ).ask()
     try:
         speaker_count = int(speaker_input)
         if speaker_count < 2 or speaker_count > 30:
