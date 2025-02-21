@@ -3,6 +3,7 @@ import sys
 import questionary
 from audio_transcriber import run_transcription_menu, run_converter_json
 from vtt_transcript_cleaner import run_cleaner
+from ui_style import custom_style
 
 def display_welcome():
     banner = r"""
@@ -16,14 +17,15 @@ def display_welcome():
 
 def main_menu():
     return questionary.select(
-        "👉 Please choose an option:",
+        "👇 Please choose an option:",
         choices=[
             "🧹 Clean a VTT Transcript",
             "☁️ Start an AWS Transcription Job",
             "🔄 Convert an AWS Transcribe JSON Transcript",
             "🚪 Exit"
         ],
-        style=custom_style
+        style=custom_style,
+        pointer="👉 "
     ).ask()
 
 def main():
