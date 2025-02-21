@@ -5,8 +5,8 @@ convert_json_transcript.py
 This module converts AWS Transcribe JSON output into a readable transcript.
 It supports two methods for obtaining the transcript data:
   1. Converting from a local JSON file.
-  2. Converting by providing an AWS Transcribe job name (retrieves transcript from AWS).
-
+  2. Converting by choosing an AWS Transcribe job from a specified S3 bucket.
+  
 The processed transcript is then displayed and saved to a file.
 """
 
@@ -98,86 +98,111 @@ def get_transcript_from_file():
         print(f"Error reading file: {e}")
         sys.exit(1)
 
-def get_transcript_from_job():
+def get_transcript_from_bucket():
     """
-    Prompt the user for an AWS Transcribe job name and retrieve its transcript data.
+    Prompt the user for an S3 bucket name (defaulting to 'internal-audio-recordings'),
+    list all AWS Transcribe jobs whose MediaFileUri begins with that bucket's path,
+    and let the user choose one.
     
     Returns:
-        dict: Transcript data retrieved from AWS.
+        dict: Transcript data retrieved from the selected transcription job.
     """
-    while True:
-        job_name = questionary.text(
-            "Enter your AWS Transcribe job name:",
+    # Prompt for bucket name (default if blank)
+    bucket = questionary.text(
+        "Enter the S3 bucket name for the audio file (leave blank for default 'internal-audio-recordings'):",
+        style=custom_style
+    ).ask().strip() or "internal-audio-recordings"
+
+    transcribe_client = boto3.client('transcribe')
+
+    # Retrieve all transcription jobs (paginated)
+    all_jobs = []
+    response = transcribe_client.list_transcription_jobs()
+    all_jobs.extend(response.get("TranscriptionJobSummaries", []))
+    while "NextToken" in response:
+        response = transcribe_client.list_transcription_jobs(NextToken=response["NextToken"])
+        all_jobs.extend(response.get("TranscriptionJobSummaries", []))
+
+    # Filter jobs based on whether their MediaFileUri starts with the provided bucket
+    matching_jobs = []
+    for job_summary in all_jobs:
+        job_name = job_summary["TranscriptionJobName"]
+        job_details = transcribe_client.get_transcription_job(TranscriptionJobName=job_name)["TranscriptionJob"]
+        media_uri = job_details.get("Media", {}).get("MediaFileUri", "")
+        if media_uri.startswith(f"s3://{bucket}/"):
+            matching_jobs.append(job_details)
+
+    if not matching_jobs:
+        print(f"No transcription jobs found for bucket '{bucket}'.")
+        retry = questionary.text(
+            "Would you like to try another bucket? (y/n):",
             style=custom_style
-        ).ask().strip()
-        if not job_name:
-            print("Job name cannot be empty. Please try again.")
-            continue
+        ).ask().lower().strip()
+        if retry == 'y':
+            return get_transcript_from_bucket()
+        else:
+            sys.exit(1)
 
-        try:
-            transcribe_client = boto3.client('transcribe')
-            response = transcribe_client.get_transcription_job(
-                TranscriptionJobName=job_name
-            )
-            status = response['TranscriptionJob']['TranscriptionJobStatus']
+    # Let the user select from the matching transcription jobs
+    job_choices = []
+    for job in matching_jobs:
+        job_choices.append(f"{job['TranscriptionJobName']} - {job['TranscriptionJobStatus']}")
 
-            if status == 'COMPLETED':
-                transcript_uri = response['TranscriptionJob']['Transcript']['TranscriptFileUri']
+    selected = questionary.select(
+        "Select a transcription job:",
+        choices=job_choices,
+        style=custom_style,
+        pointer="👉 "
+    ).ask()
+    selected_job_name = selected.split(" - ")[0]
+    final_job = transcribe_client.get_transcription_job(TranscriptionJobName=selected_job_name)["TranscriptionJob"]
+
+    # Retrieve transcript data based on job status
+    if final_job["TranscriptionJobStatus"] == "COMPLETED":
+        transcript_uri = final_job["Transcript"]["TranscriptFileUri"]
+        parsed_uri = urllib.parse.urlparse(transcript_uri)
+        if parsed_uri.netloc == 's3.amazonaws.com':
+            path_parts = parsed_uri.path.lstrip('/').split('/')
+            bucket_name = path_parts[0]
+            key = '/'.join(path_parts[1:])
+            s3_client = boto3.client('s3')
+            s3_response = s3_client.get_object(Bucket=bucket_name, Key=key)
+            data = json.loads(s3_response['Body'].read().decode('utf-8'))
+        else:
+            req_response = requests.get(transcript_uri)
+            data = req_response.json()
+        return data
+    elif final_job["TranscriptionJobStatus"] == "FAILED":
+        print("Transcription job failed:", final_job.get("FailureReason", "Unknown error"))
+        sys.exit(1)
+    else:
+        print(f"Transcription job is currently {final_job['TranscriptionJobStatus']}.")
+        wait_choice = questionary.text(
+            "Would you like to wait for the job to complete? (y/n):",
+            style=custom_style
+        ).ask().lower().strip()
+        if wait_choice == "y":
+            while final_job["TranscriptionJobStatus"] not in ["COMPLETED", "FAILED"]:
+                time.sleep(30)
+                final_job = transcribe_client.get_transcription_job(TranscriptionJobName=selected_job_name)["TranscriptionJob"]
+            if final_job["TranscriptionJobStatus"] == "COMPLETED":
+                transcript_uri = final_job["Transcript"]["TranscriptFileUri"]
                 parsed_uri = urllib.parse.urlparse(transcript_uri)
                 if parsed_uri.netloc == 's3.amazonaws.com':
                     path_parts = parsed_uri.path.lstrip('/').split('/')
-                    bucket = path_parts[0]
+                    bucket_name = path_parts[0]
                     key = '/'.join(path_parts[1:])
                     s3_client = boto3.client('s3')
-                    s3_response = s3_client.get_object(Bucket=bucket, Key=key)
+                    s3_response = s3_client.get_object(Bucket=bucket_name, Key=key)
                     data = json.loads(s3_response['Body'].read().decode('utf-8'))
                 else:
                     req_response = requests.get(transcript_uri)
                     data = req_response.json()
                 return data
-            elif status == 'FAILED':
-                print(f"Transcription job failed: {response['TranscriptionJob'].get('FailureReason', 'Unknown error')}")
             else:
-                print(f"Transcription job is currently {status}.")
-
-            wait_choice = questionary.text(
-                "Would you like to wait for the job to complete? (y/n):",
-                style=custom_style
-            ).ask().lower().strip()
-            if wait_choice == 'y' and status != 'FAILED':
-                print("Waiting for job to complete...", end='', flush=True)
-                while status not in ['COMPLETED', 'FAILED']:
-                    time.sleep(30)
-                    print(".", end='', flush=True)
-                    response = transcribe_client.get_transcription_job(TranscriptionJobName=job_name)
-                    status = response['TranscriptionJob']['TranscriptionJobStatus']
-                print("\n")
-                if status == 'COMPLETED':
-                    transcript_uri = response['TranscriptionJob']['Transcript']['TranscriptFileUri']
-                    parsed_uri = urllib.parse.urlparse(transcript_uri)
-                    if parsed_uri.netloc == 's3.amazonaws.com':
-                        path_parts = parsed_uri.path.lstrip('/').split('/')
-                        bucket = path_parts[0]
-                        key = '/'.join(path_parts[1:])
-                        s3_client = boto3.client('s3')
-                        s3_response = s3_client.get_object(Bucket=bucket, Key=key)
-                        data = json.loads(s3_response['Body'].read().decode('utf-8'))
-                    else:
-                        req_response = requests.get(transcript_uri)
-                        data = req_response.json()
-                    return data
-                else:
-                    print(f"Job failed: {response['TranscriptionJob'].get('FailureReason', 'Unknown error')}")
-        except ClientError as e:
-            print(f"Error accessing AWS: {str(e)}")
-        except Exception as e:
-            print(f"Unexpected error: {str(e)}")
-
-        retry = questionary.text(
-            "Would you like to try another job name? (y/n):",
-            style=custom_style
-        ).ask().lower().strip()
-        if retry != 'y':
+                print("Job failed:", final_job.get("FailureReason", "Unknown error"))
+                sys.exit(1)
+        else:
             sys.exit(1)
 
 def process_transcript(data, speaker_names=None):
@@ -270,7 +295,7 @@ def run_converter():
         "Choose a conversion method:",
         choices=[
             "🗃️ Convert from a JSON file on your computer",
-            "☁️ Convert using an AWS Transcribe job name"
+            "☁️ Convert using an AWS Transcribe job (select by bucket)"
         ],
         style=custom_style,
         pointer="👉 "
@@ -278,8 +303,8 @@ def run_converter():
     
     if choice == "🗃️ Convert from a JSON file on your computer":
         data = get_transcript_from_file()
-    elif choice == "☁️ Convert using an AWS Transcribe job name":
-        data = get_transcript_from_job()
+    elif choice == "☁️ Convert using an AWS Transcribe job (select by bucket)":
+        data = get_transcript_from_bucket()
     else:
         print("Invalid choice. Exiting.")
         sys.exit(1)
@@ -296,7 +321,7 @@ def run_converter():
     print("=" * 50)
     
     # Determine an output file name based on the chosen method.
-    if choice == "Convert using a local JSON file":
+    if choice == "🗃️ Convert from a JSON file on your computer":
         # Retrieve the file path again (alternatively, store it during the initial prompt)
         json_file = get_valid_file_path()
         output_dir = os.path.dirname(json_file)
