@@ -103,9 +103,6 @@ def get_transcript_from_bucket():
     Prompt the user for an S3 bucket name (defaulting to 'internal-audio-recordings'),
     list all AWS Transcribe jobs whose MediaFileUri begins with that bucket's path,
     and let the user choose one.
-    
-    Returns:
-        dict: Transcript data retrieved from the selected transcription job.
     """
     # Prompt for bucket name (default if blank)
     bucket = questionary.text(
@@ -157,7 +154,6 @@ def get_transcript_from_bucket():
     selected_job_name = selected.split(" - ")[0]
     final_job = transcribe_client.get_transcription_job(TranscriptionJobName=selected_job_name)["TranscriptionJob"]
 
-    # Retrieve transcript data based on job status
     if final_job["TranscriptionJobStatus"] == "COMPLETED":
         transcript_uri = final_job["Transcript"]["TranscriptFileUri"]
         parsed_uri = urllib.parse.urlparse(transcript_uri)
@@ -171,7 +167,7 @@ def get_transcript_from_bucket():
         else:
             req_response = requests.get(transcript_uri)
             data = req_response.json()
-        return data
+        return data, transcript_uri, selected_job_name  # Return data, URI, and job name
     elif final_job["TranscriptionJobStatus"] == "FAILED":
         print("Transcription job failed:", final_job.get("FailureReason", "Unknown error"))
         sys.exit(1)
@@ -198,7 +194,7 @@ def get_transcript_from_bucket():
                 else:
                     req_response = requests.get(transcript_uri)
                     data = req_response.json()
-                return data
+                return data, transcript_uri, selected_job_name
             else:
                 print("Job failed:", final_job.get("FailureReason", "Unknown error"))
                 sys.exit(1)
@@ -303,11 +299,15 @@ def run_converter():
     
     if choice == "🗃️ Convert from a JSON file on your computer":
         data = get_transcript_from_file()
-    elif choice == "☁️ Convert using an AWS Transcribe job (select by bucket)":
-        data = get_transcript_from_bucket()
+        # Retrieve the file path again (or store it from the initial prompt)
+        json_file = get_valid_file_path()
+        output_dir = os.path.dirname(json_file)
+        base_name = os.path.splitext(os.path.basename(json_file))[0]
+        output_file = os.path.join(output_dir, f"{base_name}_processed.txt")
     else:
-        print("Invalid choice. Exiting.")
-        sys.exit(1)
+        data, transcript_uri, job_name = get_transcript_from_bucket()
+        # Use the transcription job name for the output file
+        output_file = os.path.join(os.getcwd(), f"{job_name}_processed.txt")
     
     try:
         transcript = process_transcript(data)
@@ -319,16 +319,6 @@ def run_converter():
     print("=" * 50)
     print(transcript)
     print("=" * 50)
-    
-    # Determine an output file name based on the chosen method.
-    if choice == "🗃️ Convert from a JSON file on your computer":
-        # Retrieve the file path again (alternatively, store it during the initial prompt)
-        json_file = get_valid_file_path()
-        output_dir = os.path.dirname(json_file)
-        base_name = os.path.splitext(os.path.basename(json_file))[0]
-        output_file = os.path.join(output_dir, f"{base_name}_processed.txt")
-    else:
-        output_file = "converted_transcript.txt"
     
     try:
         with open(output_file, 'w') as f:
