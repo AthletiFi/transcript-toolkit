@@ -5,6 +5,7 @@ import os
 import time
 import questionary
 from ui_style import custom_style
+from utils import sanitize_path
 
 def print_welcome_message():
     """Display a welcome message for the VTT Transcript Cleaner module."""
@@ -46,31 +47,6 @@ def show_progress(message):
         time.sleep(0.04)
     sys.stdout.write("\r✓ " + message + "\n")
     sys.stdout.flush()
-
-def verify_file_exists(path):
-    """Check if a file exists by attempting to open it."""
-    try:
-        with open(path, 'r') as f:
-            return True
-    except (IOError, OSError):
-        return False
-
-def sanitize_path(input_path):
-    """
-    Sanitize the file path by removing surrounding quotes,
-    escape characters, and trailing spaces. Verify file existence.
-    """
-    try:
-        path = input_path.strip('\'"')
-        path = re.sub(r'\\(.)', r'\1', path)
-        path = path.rstrip()
-        if verify_file_exists(path):
-            return path
-        else:
-            raise FileNotFoundError(f"File not found: {path}")
-    except Exception as e:
-        print(f"Debug: Error during path processing: {str(e)}")
-        raise FileNotFoundError(f"Error processing path: {str(e)}")
 
 def combine_speaker_lines(content):
     """

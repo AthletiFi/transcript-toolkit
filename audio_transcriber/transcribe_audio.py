@@ -13,6 +13,7 @@ import boto3
 import questionary
 from botocore.exceptions import ClientError
 from ui_style import custom_style
+from utils import sanitize_path
 
 def print_welcome_message():
     welcome_text = """
@@ -154,8 +155,10 @@ def run_transcription_menu():
                 style=custom_style
             ).ask().strip()
             
-            if not os.path.isfile(local_file):
-                print(f"❌ Error: File '{local_file}' not found")
+            try:
+                local_file = sanitize_path(local_file)
+            except FileNotFoundError as e:
+                print(f"❌ Error: {e}")
                 return
 
             bucket = questionary.text(
