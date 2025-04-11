@@ -171,67 +171,81 @@ def get_transcript_from_bucket():
 def process_transcript(data, speaker_names=None):
     """
     Process AWS Transcribe output into a readable transcript with speaker labels.
-    
+
     Args:
         data (dict): AWS Transcribe output.
         speaker_names (dict): Optional mapping of speaker labels to names.
-    
+
     Returns:
-        str: Formatted transcript.
+        str: Formatted transcript. Returns empty string if processing fails.
     """
+    if not data or 'results' not in data:
+        print("Error: Invalid or empty transcript data.")
+        return ""
+
+    results = data['results']
+    speaker_segments = []
+    num_speakers = 0
+
+    # --- Determine Speaker Count and Get Segments ---
     try:
-        num_speakers = int(data['results']['speaker_labels']['speakers_count'])
-    except KeyError:
-        speaker_labels = {segment['speaker_label'] for segment in data['results']['speaker_labels']['segments']}
-        num_speakers = len(speaker_labels)
+        if 'speaker_labels' in results:
+            speaker_labels_data = results['speaker_labels']
+            # Check if it's the list format
+            if isinstance(speaker_labels_data, list) and speaker_labels_data:
+                speaker_segments = speaker_labels_data[0].get('segments', [])
+                # Try to get speaker count if available in this format
+                num_speakers = speaker_labels_data[0].get('speakers', 0)
+            # Check if it's the dictionary format (older?)
+            elif isinstance(speaker_labels_data, dict):
+                speaker_segments = speaker_labels_data.get('segments', [])
+                num_speakers = speaker_labels_data.get('speakers_count', 0) # Legacy key?
 
-    if speaker_names is None:
-        speaker_names = {}
-        print(f"\nDetected {num_speakers} speakers in the transcript.")
-        print("Please provide names for each speaker for better readability.")
-        for i in range(num_speakers):
-            speaker_label = f"spk_{i}"
-            while True:
-                name = questionary.text(
-                    f"Enter a name for speaker {i+1} (currently labeled as {speaker_label}):",
-                    style=custom_style
-                ).ask().strip()
-                if name:
-                    break
-                print("Name cannot be empty. Please try again.")
-            speaker_names[speaker_label] = name
+            # If count wasn't explicit, deduce from segments
+            if num_speakers == 0 and speaker_segments:
+                speaker_labels_set = {segment['speaker_label'] for segment in speaker_segments if 'speaker_label' in segment}
+                num_speakers = len(speaker_labels_set)
 
-    transcript_parts = []
-    current_speaker = None
-    current_text = []
+        # Fallback if speaker_labels structure is missing/empty but items exist
+        if num_speakers == 0 and 'items' in results and results['items']:
+             all_items = results['items']
+             speaker_labels_set = {item['speaker_label'] for item in all_items if 'speaker_label' in item}
+             num_speakers = len(speaker_labels_set)
+             if num_speakers > 0:
+                  print("Warning: Speaker labels structure missing, deduced count from items.")
+                  # Try to generate basic segments from items if speaker_segments is empty
+                  if not speaker_segments:
+                       print("Warning: No segments found, attempting to reconstruct from items (may be less accurate).")
+                       # This is complex - best effort: group consecutive items by speaker
+                       temp_segments = []
+                       current_seg = None
+                       for item in all_items:
+                           if item.get('type') == 'pronunciation' and 'speaker_label' in item:
+                               if current_seg and current_seg['speaker_label'] == item['speaker_label']:
+                                   current_seg['end_time'] = item['end_time']
+                                   current_seg['items'].append(item)
+                               else:
+                                   if current_seg: temp_segments.append(current_seg)
+                                   current_seg = {
+                                       'speaker_label': item['speaker_label'],
+                                       'start_time': item['start_time'],
+                                       'end_time': item['end_time'],
+                                       'items': [item] # Store items for content later
+                                   }
+                       if current_seg: temp_segments.append(current_seg)
+                       speaker_segments = temp_segments # Use reconstructed segments
+             else:
+                  print("Warning: No speaker labels found anywhere. Processing as single speaker.")
+                  num_speakers = 1 # Treat as single speaker
 
-    for segment in data['results']['speaker_labels']['segments']:
-        if 'items' not in segment:
-            continue
-        speaker = segment['speaker_label']
-        start_time = float(segment['start_time'])
-        end_time = float(segment['end_time'])
-        segment_items = []
-        for item in data['results'].get('items', []):
-            if 'start_time' not in item or 'end_time' not in item:
-                continue
-            item_start = float(item['start_time'])
-            item_end = float(item['end_time'])
-            if item_start >= start_time and item_end <= end_time:
-                segment_items.append(item['alternatives'][0]['content'])
-        if current_speaker is not None and current_speaker != speaker:
-            speaker_name = speaker_names.get(current_speaker, current_speaker)
-            transcript_parts.append(f"\n{speaker_name}: {' '.join(current_text)}")
-            current_text = []
-        current_speaker = speaker
-        current_text.extend(segment_items)
+        elif num_speakers == 0:
+             print("Error: Could not determine number of speakers.")
+             return "" # Cannot proceed without speaker info if expected
 
-    if current_text:
-        speaker_name = speaker_names.get(current_speaker, current_speaker)
-        transcript_parts.append(f"\n{speaker_name}: {' '.join(current_text)}")
-
-    final_transcript = ''.join(transcript_parts).strip()
-    return final_transcript
+    except (KeyError, IndexError, TypeError) as e:
+        print(f"Error accessing speaker label data: {e}")
+        print("Attempting to process as single speaker.")
+        num_speakers = 1 
 
 def print_concluding_message(output_file):
     concluding_message = f"""

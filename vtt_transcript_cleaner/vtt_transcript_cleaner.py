@@ -44,7 +44,7 @@ def show_progress(message):
     for i in range(10):
         sys.stdout.write(f"\r{animation[i]} {message}")
         sys.stdout.flush()
-        time.sleep(0.04)
+        time.sleep(0.02)
     sys.stdout.write("\r✓ " + message + "\n")
     sys.stdout.flush()
 
