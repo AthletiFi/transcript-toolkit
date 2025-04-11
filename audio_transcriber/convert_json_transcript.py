@@ -245,7 +245,148 @@ def process_transcript(data, speaker_names=None):
     except (KeyError, IndexError, TypeError) as e:
         print(f"Error accessing speaker label data: {e}")
         print("Attempting to process as single speaker.")
-        num_speakers = 1 
+        num_speakers = 1 # Fallback
+
+    # --- Get Speaker Names ---
+    if num_speakers > 1 and speaker_names is None:
+        speaker_names = {}
+        # Get unique speaker labels present in the actual segments or items
+        present_speaker_labels = set()
+        if speaker_segments:
+             present_speaker_labels.update(seg.get('speaker_label') for seg in speaker_segments if seg.get('speaker_label'))
+        elif results.get('items'):
+             present_speaker_labels.update(item.get('speaker_label') for item in results['items'] if item.get('speaker_label'))
+
+        sorted_labels = sorted(list(present_speaker_labels))
+
+        print(f"\nDetected {len(sorted_labels)} unique speaker labels: {', '.join(sorted_labels)}")
+        print("Please provide names for each speaker label for better readability.")
+
+        for label in sorted_labels:
+            while True:
+                name = questionary.text(
+                    f"Enter a name for speaker label '{label}':",
+                    style=custom_style
+                ).ask()
+                if name is None: sys.exit("Operation cancelled.") # Handle ctrl+c
+                name = name.strip()
+                if name:
+                    speaker_names[label] = name
+                    break
+                print("Name cannot be empty. Please try again.")
+
+    elif num_speakers <= 1 and speaker_names is None:
+        # Handle single speaker or no speaker labels case
+        single_speaker_label = next((seg.get('speaker_label') for seg in speaker_segments if seg.get('speaker_label')), 'spk_0')
+        speaker_names = {single_speaker_label: "Speaker"} # Default name
+
+    # --- Process Segments ---
+    transcript_parts = []
+    current_speaker_name = None
+    current_text_parts = []
+    all_items = results.get('items', []) # Get top-level items once
+
+    if not speaker_segments and num_speakers == 1 and all_items:
+         # Special case: No segments, but items exist, treat as one speaker block
+         print("Processing transcript as a single speaker block.")
+         words = [item['alternatives'][0]['content']
+                  for item in all_items
+                  if item.get('type') == 'pronunciation' and item.get('alternatives')]
+         if words:
+              single_speaker_label = next(iter(speaker_names.keys()), 'spk_0') # Get the label used
+              speaker_display_name = speaker_names.get(single_speaker_label, "Speaker")
+              return f"{speaker_display_name}: {' '.join(words)}"
+         else:
+              return "" # No content
+
+
+    for segment in speaker_segments:
+        speaker_label = segment.get('speaker_label')
+        start_time_str = segment.get('start_time')
+        end_time_str = segment.get('end_time')
+
+        if not all([speaker_label, start_time_str, end_time_str]):
+            print(f"Skipping segment due to missing data: {segment}")
+            continue
+
+        try:
+            start_time = float(start_time_str)
+            end_time = float(end_time_str)
+        except ValueError:
+            print(f"Skipping segment due to invalid time format: {segment}")
+            continue
+
+        # --- Find words belonging to this segment ---
+        # Method 1: Use items nested within segment if available (rare in speaker_labels)
+        segment_words = []
+        if 'items' in segment and isinstance(segment['items'], list):
+            segment_words = [item['alternatives'][0]['content']
+                             for item in segment['items']
+                             if item.get('type') == 'pronunciation' and item.get('alternatives')]
+        # Method 2: Filter global items list (more common based on user JSON)
+        else:
+            for item in all_items:
+                 item_type = item.get('type')
+                 item_label = item.get('speaker_label')
+                 item_start_str = item.get('start_time')
+                 item_end_str = item.get('end_time')
+
+                 if not all([item_type, item_label, item_start_str, item_end_str]):
+                     continue # Skip items with missing data
+
+                 if item_type == 'pronunciation':
+                    try:
+                         item_start = float(item_start_str)
+                         item_end = float(item_end_str)
+                         # Check if item midpoint falls within segment and speaker matches
+                         item_midpoint = item_start + (item_end - item_start) / 2.0
+                         if item_label == speaker_label and item_midpoint >= start_time and item_midpoint <= end_time:
+                              if item.get('alternatives'):
+                                  segment_words.append(item['alternatives'][0]['content'])
+                    except ValueError:
+                        continue # Skip item with bad time format
+
+        if not segment_words:
+            continue # Skip empty segments
+
+        segment_text = ' '.join(segment_words)
+        speaker_display_name = speaker_names.get(speaker_label, speaker_label) # Get display name
+
+        # Combine consecutive segments from the same speaker
+        if current_speaker_name == speaker_display_name:
+            current_text_parts.append(segment_text)
+        else:
+            # Append previous speaker's text if it exists
+            if current_text_parts:
+                transcript_parts.append(f"\n{current_speaker_name}: {' '.join(current_text_parts)}")
+            # Start new speaker segment
+            current_speaker_name = speaker_display_name
+            current_text_parts = [segment_text]
+
+    # Append the last speaker's text
+    if current_text_parts:
+        transcript_parts.append(f"\n{current_speaker_name}: {' '.join(current_text_parts)}")
+
+    final_transcript = ''.join(transcript_parts).strip()
+
+    # Final fallback if processing yielded nothing but there was data
+    if not final_transcript and all_items:
+         print("Warning: Segment processing yielded empty transcript. Falling back to basic concatenation.")
+         words = [item['alternatives'][0]['content']
+                  for item in all_items
+                  if item.get('type') == 'pronunciation' and item.get('alternatives')]
+         if words:
+              # Try to use the first speaker name if available
+              first_label = next(iter(speaker_names.keys()), 'spk_0')
+              speaker_display_name = speaker_names.get(first_label, "Speaker")
+              return f"{speaker_display_name}: {' '.join(words)}"
+         else:
+              return "" # No content found at all
+    elif not final_transcript and not all_items:
+         print("Warning: No items found in transcript results.")
+         return ""
+
+    return final_transcript
 
 def print_concluding_message(output_file):
     concluding_message = f"""
@@ -267,7 +408,7 @@ def run_converter():
     displays the formatted transcript, and saves the output.
     """
     print_welcome_message()
-    
+
     choice = questionary.select(
         "Choose a conversion method:",
         choices=[
@@ -277,38 +418,103 @@ def run_converter():
         style=custom_style,
         pointer="👉 "
     ).ask()
-    
+
+    if choice is None: # Handle ctrl+c
+         sys.exit("Operation cancelled by user.")
+
+    output_file = None
+    data = None
+    job_name = None # Initialize job_name
+
     if choice == "🗃️ Convert from a JSON file on your computer":
-        data = get_transcript_from_file()
-        # Retrieve the file path again (or store it from the initial prompt)
-        json_file = get_valid_file_path()
-        output_dir = os.path.dirname(json_file)
-        base_name = os.path.splitext(os.path.basename(json_file))[0]
-        output_file = os.path.join(output_dir, f"{base_name}_processed.txt")
-    else:
+        data, json_file = get_transcript_from_file() # Now gets path too
+        if data and json_file:
+            output_dir = os.path.dirname(json_file)
+            base_name = os.path.splitext(os.path.basename(json_file))[0]
+            # Sanitize base_name further if needed for filenames
+            safe_base_name = re.sub(r'[^\w\-_\. ]', '_', base_name)
+            output_file = os.path.join(output_dir, f"{safe_base_name}_processed.txt")
+    elif choice == "☁️ Convert using an AWS Transcribe job (select by bucket)":
         data, transcript_uri, job_name = get_transcript_from_bucket()
-        # Use the transcription job name for the output file
-        output_file = os.path.join(os.getcwd(), f"{job_name}_processed.txt")
-    
-    try:
-        transcript = process_transcript(data)
-    except Exception as e:
-        print(f"Error processing transcript: {e}")
+        if data and job_name:
+            # Use the transcription job name for the output file
+            safe_job_name = re.sub(r'[^\w\-_\. ]', '_', job_name)
+            output_file = os.path.join(os.getcwd(), f"{safe_job_name}_processed.txt")
+    else:
+        print("Invalid choice.")
         sys.exit(1)
-    
+
+    if not data:
+        print("Failed to load transcript data.")
+        sys.exit(1)
+
+    if not output_file:
+        # Generate a default output filename if somehow it wasn't set
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        output_file = os.path.join(os.getcwd(), f"transcript_processed_{timestamp}.txt")
+        print(f"Warning: Output file path not determined, using default: {output_file}")
+
+
+    try:
+        # Check if speaker labels exist before calling process_transcript
+        has_speaker_labels = 'speaker_labels' in data.get('results', {}) and \
+                             data['results']['speaker_labels']
+        has_items_with_labels = any('speaker_label' in item for item in data.get('results', {}).get('items', []))
+
+        if has_speaker_labels or has_items_with_labels:
+            transcript = process_transcript(data)
+        else:
+            print("\nWarning: No speaker label information found in the transcript.")
+            print("Processing as a single speaker.")
+            # Simple concatenation if no speaker labels
+            items = data.get('results', {}).get('items', [])
+            words = [item['alternatives'][0]['content']
+                     for item in items
+                     if item.get('type') == 'pronunciation' and item.get('alternatives')]
+            transcript = "Speaker: " + ' '.join(words) if words else ""
+
+        # Ensure transcript is a string, not None
+        if transcript is None:
+            transcript = ""
+            print("\nWarning: Processing resulted in empty transcript.")
+
+    except Exception as e:
+        # Catch potential errors during processing (like unexpected structure deeper in)
+        print(f"\nError processing transcript: {e}")
+        import traceback
+        traceback.print_exc() # Print full traceback for debugging
+        sys.exit(1)
+
+    if not transcript:
+         print("\nWarning: Processed transcript is empty.")
+         # Ask user if they still want to save the empty file?
+         save_empty = questionary.confirm(
+            "Do you want to save the empty transcript file?",
+            default=False,
+            style=custom_style
+         ).ask()
+         if not save_empty:
+             print("Skipping save for empty transcript.")
+             sys.exit(0)
+
     print("\nProcessed Transcript:")
     print("=" * 50)
     print(transcript)
     print("=" * 50)
-    
+
     try:
-        with open(output_file, 'w') as f:
+        # Ensure the output directory exists
+        output_dir = os.path.dirname(output_file)
+        if output_dir: # Check if output_dir is not empty (happens if saving in cwd)
+            os.makedirs(output_dir, exist_ok=True)
+
+        with open(output_file, 'w', encoding='utf-8') as f: # Specify encoding
             f.write(transcript)
     except Exception as e:
-        print(f"Error saving transcript: {e}")
+        print(f"Error saving transcript to '{output_file}': {e}")
         sys.exit(1)
-    
-    print_concluding_message(output_file)
 
+    print_concluding_message(output_file)
+    
 if __name__ == "__main__":
     run_converter()
