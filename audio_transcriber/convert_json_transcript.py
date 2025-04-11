@@ -186,6 +186,7 @@ def process_transcript(data, speaker_names=None):
     results = data['results']
     speaker_segments = []
     num_speakers = 0
+    debug_mode = False  # Set to True for additional debugging output
 
     # --- Determine Speaker Count and Get Segments ---
     try:
@@ -299,78 +300,123 @@ def process_transcript(data, speaker_names=None):
          else:
               return "" # No content
 
-
+    # Map all speaker labels to their segments for easier matching
+    speaker_time_ranges = {}
     for segment in speaker_segments:
         speaker_label = segment.get('speaker_label')
+        if not speaker_label:
+            continue
+        
         start_time_str = segment.get('start_time')
         end_time_str = segment.get('end_time')
-
-        if not all([speaker_label, start_time_str, end_time_str]):
-            print(f"Skipping segment due to missing data: {segment}")
+        
+        if not all([start_time_str, end_time_str]):
             continue
-
+            
         try:
             start_time = float(start_time_str)
             end_time = float(end_time_str)
+            
+            if speaker_label not in speaker_time_ranges:
+                speaker_time_ranges[speaker_label] = []
+                
+            speaker_time_ranges[speaker_label].append((start_time, end_time))
         except ValueError:
-            print(f"Skipping segment due to invalid time format: {segment}")
             continue
+    
+    # Second approach: match items to speakers by time ranges
+    speaker_texts = {}
+    for item in all_items:
+        if item.get('type') != 'pronunciation' or not item.get('alternatives'):
+            continue
+            
+        item_start_str = item.get('start_time')
+        item_end_str = item.get('end_time')
+        
+        if not all([item_start_str, item_end_str]):
+            continue
+            
+        try:
+            item_start = float(item_start_str)
+            item_end = float(item_end_str)
+            item_midpoint = (item_start + item_end) / 2
+            
+            # Try to find which speaker was talking at this time
+            matched_speaker = None
+            
+            # First try speaker_label in the item if it exists
+            item_speaker = item.get('speaker_label')
+            if item_speaker:
+                matched_speaker = item_speaker
+            else:
+                # Otherwise check time ranges
+                for speaker, time_ranges in speaker_time_ranges.items():
+                    for start, end in time_ranges:
+                        # Use looser matching - only require the midpoint to be in range
+                        if item_midpoint >= start and item_midpoint <= end:
+                            matched_speaker = speaker
+                            break
+                    if matched_speaker:
+                        break
+            
+            # If still no match, assign to closest speaker segment
+            if not matched_speaker and speaker_time_ranges:
+                min_distance = float('inf')
+                for speaker, time_ranges in speaker_time_ranges.items():
+                    for start, end in time_ranges:
+                        if item_midpoint < start:
+                            distance = start - item_midpoint
+                        elif item_midpoint > end:
+                            distance = item_midpoint - end
+                        else:
+                            distance = 0  # It's within range
+                            
+                        if distance < min_distance:
+                            min_distance = distance
+                            matched_speaker = speaker
+            
+            # If we found a speaker, add the word to their text
+            if matched_speaker:
+                if matched_speaker not in speaker_texts:
+                    speaker_texts[matched_speaker] = []
+                    
+                speaker_texts[matched_speaker].append(item['alternatives'][0]['content'])
+                
+        except ValueError:
+            continue
+    
+    # If we got any speaker texts, build the transcript
+    if speaker_texts:
+        # Order speakers by their first segment's start time
+        ordered_speakers = []
+        for speaker in speaker_texts.keys():
+            # Find earliest segment for this speaker
+            if speaker in speaker_time_ranges and speaker_time_ranges[speaker]:
+                earliest_time = min(start for start, _ in speaker_time_ranges[speaker])
+                ordered_speakers.append((speaker, earliest_time))
+        
+        # Sort by earliest start time
+        ordered_speakers.sort(key=lambda x: x[1])
+        
+        # Build transcript
+        for speaker, _ in ordered_speakers:
+            speaker_name = speaker_names.get(speaker, speaker)
+            speaker_text = ' '.join(speaker_texts[speaker])
+            if speaker_text.strip():
+                transcript_parts.append(f"\n{speaker_name}: {speaker_text}")
+                
+        final_transcript = ''.join(transcript_parts).strip()
+        if final_transcript:
+            return final_transcript
+    
+    # If we still don't have a transcript, fall back to the original method
+    if debug_mode:
+        print(f"DEBUG: {len(speaker_segments)} segments found")
+        print(f"DEBUG: {len(all_items)} items found")
+        print(f"DEBUG: Speaker time ranges: {speaker_time_ranges}")
 
-        # --- Find words belonging to this segment ---
-        # Method 1: Use items nested within segment if available (rare in speaker_labels)
-        segment_words = []
-        if 'items' in segment and isinstance(segment['items'], list):
-            segment_words = [item['alternatives'][0]['content']
-                             for item in segment['items']
-                             if item.get('type') == 'pronunciation' and item.get('alternatives')]
-        # Method 2: Filter global items list (more common based on user JSON)
-        else:
-            for item in all_items:
-                 item_type = item.get('type')
-                 item_label = item.get('speaker_label')
-                 item_start_str = item.get('start_time')
-                 item_end_str = item.get('end_time')
-
-                 if not all([item_type, item_label, item_start_str, item_end_str]):
-                     continue # Skip items with missing data
-
-                 if item_type == 'pronunciation':
-                    try:
-                         item_start = float(item_start_str)
-                         item_end = float(item_end_str)
-                         # Check if item midpoint falls within segment and speaker matches
-                         item_midpoint = item_start + (item_end - item_start) / 2.0
-                         if item_label == speaker_label and item_midpoint >= start_time and item_midpoint <= end_time:
-                              if item.get('alternatives'):
-                                  segment_words.append(item['alternatives'][0]['content'])
-                    except ValueError:
-                        continue # Skip item with bad time format
-
-        if not segment_words:
-            continue # Skip empty segments
-
-        segment_text = ' '.join(segment_words)
-        speaker_display_name = speaker_names.get(speaker_label, speaker_label) # Get display name
-
-        # Combine consecutive segments from the same speaker
-        if current_speaker_name == speaker_display_name:
-            current_text_parts.append(segment_text)
-        else:
-            # Append previous speaker's text if it exists
-            if current_text_parts:
-                transcript_parts.append(f"\n{current_speaker_name}: {' '.join(current_text_parts)}")
-            # Start new speaker segment
-            current_speaker_name = speaker_display_name
-            current_text_parts = [segment_text]
-
-    # Append the last speaker's text
-    if current_text_parts:
-        transcript_parts.append(f"\n{current_speaker_name}: {' '.join(current_text_parts)}")
-
-    final_transcript = ''.join(transcript_parts).strip()
-
-    # Final fallback if processing yielded nothing but there was data
-    if not final_transcript and all_items:
+    # Fallback if processing yielded nothing but there was data
+    if all_items:
          print("Warning: Segment processing yielded empty transcript. Falling back to basic concatenation.")
          words = [item['alternatives'][0]['content']
                   for item in all_items
@@ -382,11 +428,9 @@ def process_transcript(data, speaker_names=None):
               return f"{speaker_display_name}: {' '.join(words)}"
          else:
               return "" # No content found at all
-    elif not final_transcript and not all_items:
+    else:
          print("Warning: No items found in transcript results.")
          return ""
-
-    return final_transcript
 
 def print_concluding_message(output_file):
     concluding_message = f"""
@@ -515,6 +559,6 @@ def run_converter():
         sys.exit(1)
 
     print_concluding_message(output_file)
-    
+
 if __name__ == "__main__":
     run_converter()
