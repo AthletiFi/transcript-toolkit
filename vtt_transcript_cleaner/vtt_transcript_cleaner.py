@@ -142,7 +142,8 @@ def clean_transcript(input_file):
 
     output_file = input_file.replace('.vtt', '_cleaned.txt')
     if output_file == input_file:
-        output_file = input_file + '_cleaned.txt'
+        # output_file = input_file + '_cleaned.txt'
+        output_file = input_file + '.txt'
 
     show_progress("Saving cleaned transcript...")
     with open(output_file, 'w', encoding='utf-8') as f:
