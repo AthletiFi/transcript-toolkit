@@ -140,7 +140,8 @@ def clean_transcript(input_file):
     show_progress("Cleaning up extra spaces...")
     content = re.sub(r'\n\s*\n', '\n', content)
 
-    output_file = input_file.replace('.vtt', '_cleaned.txt')
+    # output_file = input_file.replace('.vtt', '_cleaned.txt')
+    output_file = input_file.replace('.vtt', '.txt')
     if output_file == input_file:
         # output_file = input_file + '_cleaned.txt'
         output_file = input_file + '.txt'
